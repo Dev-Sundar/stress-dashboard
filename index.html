@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Smart Stress Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
+  import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js";
+
+  const firebaseConfig = {
+    databaseURL: "https://finalyear-9fabc-default-rtdb.asia-southeast1.firebasedatabase.app/"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+
+  const el = id => document.getElementById(id);
+
+  let history = [];
+  let labels = [], gsrArr = [], luxArr = [], stressArr = [], speedArr = [];
+
+  const gsrChart = new Chart(document.getElementById('gsrChart'), {
+    type: 'line', data: { labels, datasets: [{ label:'GSR', data: gsrArr, borderWidth:2 }] }
+  });
+
+  const stressChart = new Chart(document.getElementById('stressChart'), {
+    type:'line', data:{ labels, datasets:[{ label:'Stress', data:stressArr, borderWidth:2 }] }
+  });
+
+  const accChart = new Chart(document.getElementById('accChart'), {
+    type:'line', data:{ labels, datasets:[{ label:'Speed (km/h)', data:speedArr, borderWidth:2 }] }
+  });
+
+  function vectorSpeed(x,y,z){ return Math.sqrt(x*x + y*y + z*z) * 0.1; }
+
+  async function predictStress(payload){
+    try{
+      const res = await fetch("https://stress-level-api.onrender.com/predict",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      const data = await res.json();
+      return data.stress_level;
+    } catch(e){ return "Unknown"; }
+  }
+
+  onValue(ref(db, 'sensors'), async snap => {
+    const d = snap.val(); if(!d) return;
+
+    let speed = vectorSpeed(d.ax, d.ay, d.az);
+    let prediction = await predictStress({
+      ADXL345_X:d.ax,
+      ADXL345_Y:d.ay,
+      ADXL345_Z:d.az,
+      HeartRate:d.hr,
+      SpO2:d.spo2,
+      LightLux:d.lux,
+      GSR:d.gsr
+    });
+
+    el('gsr').textContent = d.gsr;
+    el('lux').textContent = d.lux;
+    el('hr').textContent = d.hr;
+    el('spo2').textContent = d.spo2;
+    el('ax').textContent = d.ax;
+    el('ay').textContent = d.ay;
+    el('az').textContent = d.az;
+    el('speed').textContent = speed.toFixed(2);
+
+    el('stress').textContent = prediction;
+    el('stress').style.color = prediction === "High" ? "#ff4b4b" : prediction === "Medium" ? "#ffcc00" : "#4bff62";
+
+    let time = new Date().toLocaleTimeString();
+    labels.push(time);
+    gsrArr.push(d.gsr);
+    luxArr.push(d.lux);
+    stressArr.push(prediction === "Low" ? 1 : prediction === "Medium" ? 2 : 3);
+    speedArr.push(speed);
+
+    gsrChart.update();
+    stressChart.update();
+    accChart.update();
+
+    history.push({ time, ...d, speed, prediction });
+    renderHistory();
+  });
+
+  function renderHistory(){
+    const tbody = el('historyBody');
+    tbody.innerHTML = "";
+    history.slice(-20).forEach(r =>{
+      tbody.innerHTML += `<tr>
+        <td>${r.time}</td><td>${r.gsr}</td><td>${r.lux}</td>
+        <td>${r.hr}</td><td>${r.spo2}</td><td>${r.speed.toFixed(1)}</td>
+        <td>${r.prediction}</td>
+      </tr>`;
+    });
+  }
+
+  el('downloadCsv').onclick = () =>{
+    let csv = "Time,GSR,Lux,HR,SpO2,Speed,Stress";
+    history.forEach(r =>{
+      csv += `${r.time},${r.gsr},${r.lux},${r.hr},${r.spo2},${r.speed},${r.prediction}
+`;
+    });
+    const blob = new Blob([csv],{type:"text/csv"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "sensor_history.csv"; a.click();
+  };
+
+  el('resetBtn').onclick = () =>{
+    history=[]; labels=[]; gsrArr=[]; luxArr=[]; stressArr=[]; speedArr=[];
+    gsrChart.update(); stressChart.update(); accChart.update(); renderHistory();
+  };
+</script>
+
+<style>
+body{
+  margin:0; padding:20px;
+  font-family:'Poppins',sans-serif;
+  background:linear-gradient(135deg,#1a1a1a,#232323);
+  color:white;
+}
+.card{
+  backdrop-filter:blur(12px);
+  background:rgba(255,255,255,0.08);
+  border-radius:18px;
+  padding:20px;
+  margin-bottom:25px;
+  box-shadow:0 8px 25px rgba(0,0,0,0.3);
+}
+.btn{
+  padding:10px 18px;
+  border-radius:10px;
+  border:none;
+  cursor:pointer;
+  font-weight:600;
+  margin-right:10px;
+}
+.btn-primary{ background:#4b7bff; color:white; }
+.btn-danger{ background:#ff4b4b; color:white; }
+.table{
+  width:100%; border-collapse:collapse; margin-top:15px;
+}
+.table td,.table th{
+  border-bottom:1px solid #444;
+  padding:8px;
+}
+</style>
+</head>
+
+<body>
+<h1>🔥 Smart Stress Monitoring Dashboard</h1>
+
+<div class="card">
+  <h2>🔴 Live Sensor Data</h2>
+  <p><b>Stress:</b> <span id="stress">-</span></p>
+  <p><b>Speed (km/h):</b> <span id="speed">-</span></p>
+  <p><b>GSR:</b> <span id="gsr">-</span></p>
+  <p><b>Lux:</b> <span id="lux">-</span></p>
+  <p><b>Heart Rate:</b> <span id="hr">-</span></p>
+  <p><b>SpO2:</b> <span id="spo2">-</span></p>
+  <p><b>AX:</b> <span id="ax">-</span></p>
+  <p><b>AY:</b> <span id="ay">-</span></p>
+  <p><b>AZ:</b> <span id="az">-</span></p>
+</div>
+
+<div class="card"><h2>GSR Graph</h2><canvas id="gsrChart"></canvas></div>
+<div class="card"><h2>Stress Level Graph</h2><canvas id="stressChart"></canvas></div>
+<div class="card"><h2>Speed (km/h) Graph</h2><canvas id="accChart"></canvas></div>
+
+<div class="card">
+  <h2>📊 History (Latest 20)</h2>
+  <button class="btn btn-primary" id="downloadCsv">Download CSV</button>
+  <button class="btn btn-danger" id="resetBtn">Reset</button>
+
+  <table class="table">
+    <thead><tr>
+      <th>Time</th><th>GSR</th><th>Lux</th><th>HR</th><th>SpO2</th><th>Speed</th><th>Stress</th>
+    </tr></thead>
+    <tbody id="historyBody"></tbody>
+  </table>
+</div>
+
+</body>
+</html>
